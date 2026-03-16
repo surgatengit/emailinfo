@@ -647,7 +647,18 @@ mostrar_resumen() {
     linea_vacia
     linea_recuadro "   ${color}[${barra}]${NC}  ${SCORE}/${MAX_SCORE} puntos (${porcentaje}%)"
     linea_vacia
-    linea_recuadro "   Nivel de seguridad: ${color}${BOLD}${nivel}${NC}  ${emoji}"
+    # El emoji ocupa 2 columnas en terminal pero se mide como 1 carácter.
+    # Compensamos restando 1 espacio con el truco de meterlo en el cálculo.
+    local linea_nivel
+    linea_nivel=$(printf "   Nivel de seguridad: %-12s %s" "$nivel" "$emoji")
+    local visible_nivel
+    visible_nivel=$(printf '%b' "   Nivel de seguridad: ${nivel}  ${emoji}" | sed 's/\x1b\[[0-9;]*m//g')
+    local len_nivel=${#visible_nivel}
+    # Sumar 1 por el ancho extra del emoji en terminal
+    len_nivel=$((len_nivel + 1))
+    local pad_nivel=$((W - len_nivel))
+    if [[ $pad_nivel -lt 0 ]]; then pad_nivel=0; fi
+    printf "${CYAN}║${NC}   Nivel de seguridad: ${color}${BOLD}${nivel}${NC}  ${emoji}%*s${CYAN}║${NC}\n" "$pad_nivel" ""
     linea_vacia
     printf "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}\n"
     linea_recuadro " ${BOLD}Recomendaciones:${NC}"
