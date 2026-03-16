@@ -139,7 +139,7 @@ mostrar_banner() {
 auditar_spf() {
     local dominio="$1"
     seccion_inicio
-    L "${BOLD}1. SPF (Sender Policy Framework)${NC}"
+    L "${BOLD}2. SPF (Sender Policy Framework)${NC}"
     L "${DIM}Define qué servidores pueden enviar correo por este dominio${NC}"
     LV
 
@@ -222,7 +222,7 @@ auditar_spf() {
 auditar_dkim() {
     local dominio="$1"
     seccion_inicio
-    L "${BOLD}2. DKIM (DomainKeys Identified Mail)${NC}"
+    L "${BOLD}3. DKIM (DomainKeys Identified Mail)${NC}"
     L "${DIM}Firma criptográfica que verifica la integridad del mensaje${NC}"
     LV
 
@@ -262,7 +262,7 @@ auditar_dkim() {
 auditar_dmarc() {
     local dominio="$1"
     seccion_inicio
-    L "${BOLD}3. DMARC (Domain-based Message Authentication, Reporting & Conformance)${NC}"
+    L "${BOLD}4. DMARC (Domain-based Message Authentication, Reporting & Conformance)${NC}"
     L "${DIM}Política que une SPF y DKIM e indica cómo tratar fallos${NC}"
     LV
 
@@ -345,7 +345,7 @@ auditar_dmarc() {
 auditar_mx() {
     local dominio="$1"
     seccion_inicio
-    L "${BOLD}4. MX (Mail eXchange)${NC}"
+    L "${BOLD}1. MX (Mail eXchange)${NC}"
     L "${DIM}Servidores responsables de recibir correo para el dominio${NC}"
     LV
 
