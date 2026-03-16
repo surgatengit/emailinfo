@@ -6,8 +6,6 @@
 # Uso: ./email-audit.sh [dominio]
 #       Si no se pasa argumento, lo solicita de forma interactiva.
 
-# No usar set -e: muchos comandos (dig, grep, nc) devuelven exit != 0
-# legítimamente cuando no hay resultados, y eso aborta el script.
 set -uo pipefail
 
 # ─── Colores ──────────────────────────────────────────────────────────
@@ -20,26 +18,24 @@ CYAN='\033[0;36m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# ─── Iconos de estado ────────────────────────────────────────────────
 OK="${GREEN}✓${NC}"
 WARN="${YELLOW}⚠${NC}"
 FAIL="${RED}✗${NC}"
 INFO="${CYAN}ℹ${NC}"
 
-# ─── Puntuación global ───────────────────────────────────────────────
 SCORE=0
 MAX_SCORE=0
 MX_SERVERS=()
+TIENE_MX=false
 
-# Ancho interno del recuadro (entre los bordes ║)
-W=62
+W=62  # ancho interno recuadro
 
 sumar_puntos() {
     SCORE=$((SCORE + $1))
     MAX_SCORE=$((MAX_SCORE + $2))
 }
 
-# ─── Utilidad: línea con padding dentro de recuadro ──────────────────
+# ─── Utilidades de recuadro ──────────────────────────────────────────
 linea_recuadro() {
     local texto="$1"
     local visible
@@ -54,23 +50,34 @@ linea_vacia() {
     printf "${CYAN}║${NC}%*s${CYAN}║${NC}\n" "$W" ""
 }
 
-# ─── Utilidad: ejecutar dig de forma segura ──────────────────────────
-# Evita que fallos de dig o grep propaguen errores
+# Línea de sección con borde izquierdo │
+L() {
+    local texto="${1:-}"
+    printf "${BLUE}│${NC} %b\n" "$texto"
+}
+
+# Línea de sección vacía con borde
+LV() {
+    printf "${BLUE}│${NC}\n"
+}
+
+seccion_inicio() {
+    printf "${BLUE}┌──────────────────────────────────────────────────────────────┐${NC}\n"
+}
+
+seccion_fin() {
+    printf "${BLUE}└──────────────────────────────────────────────────────────────┘${NC}\n\n"
+}
+
 safe_dig() {
     dig "$@" 2>/dev/null || true
 }
 
 # ─── Comprobación de dependencias ────────────────────────────────────
 comprobar_dependencias() {
-    local faltan=()
-    for cmd in dig; do
-        if ! command -v "$cmd" &>/dev/null; then
-            faltan+=("$cmd")
-        fi
-    done
-    if [[ ${#faltan[@]} -gt 0 ]]; then
-        printf "${RED}Error:${NC} Faltan comandos: %s\n" "${faltan[*]}"
-        printf "Instálalos con:\n"
+    if ! command -v dig &>/dev/null; then
+        printf "${RED}Error:${NC} Falta el comando 'dig'.\n"
+        printf "Instálalo con:\n"
         printf "  Debian/Ubuntu: sudo apt-get install dnsutils\n"
         printf "  CentOS/RHEL:   sudo yum install bind-utils\n"
         printf "  macOS:         brew install bind\n"
@@ -82,6 +89,29 @@ comprobar_dependencias() {
 validar_dominio() {
     if [[ ! "$1" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$ ]]; then
         printf "${RED}Error:${NC} '%s' no parece un dominio válido.\n" "$1"
+        exit 1
+    fi
+}
+
+# ─── Verificar que el dominio existe en DNS ──────────────────────────
+verificar_dominio_existe() {
+    local dominio="$1"
+    local cualquier_registro
+    cualquier_registro=$(safe_dig +short ANY "$dominio" || true)
+    # Si ANY no devuelve nada, probar con A y NS
+    if [[ -z "$cualquier_registro" ]]; then
+        cualquier_registro=$(safe_dig +short A "$dominio" || true)
+    fi
+    if [[ -z "$cualquier_registro" ]]; then
+        cualquier_registro=$(safe_dig +short NS "$dominio" || true)
+    fi
+    if [[ -z "$cualquier_registro" ]]; then
+        printf "\n"
+        printf "${RED}══════════════════════════════════════════════════════════════${NC}\n"
+        printf "${RED}  ✗ El dominio '%s' no tiene registros DNS.${NC}\n" "$dominio"
+        printf "${RED}  ¿Está bien escrito? Comprueba que no haya erratas.${NC}\n"
+        printf "${RED}══════════════════════════════════════════════════════════════${NC}\n"
+        printf "\n"
         exit 1
     fi
 }
@@ -105,107 +135,96 @@ mostrar_banner() {
     printf "\n"
 }
 
-separador() {
-    printf "${BLUE}┌──────────────────────────────────────────────────────────────┐${NC}\n"
-}
-
-separador_fin() {
-    printf "${BLUE}└──────────────────────────────────────────────────────────────┘${NC}\n\n"
-}
-
 # ─── SPF ─────────────────────────────────────────────────────────────
 auditar_spf() {
     local dominio="$1"
-    separador
-    printf "${BLUE}│${NC} ${BOLD}1. SPF (Sender Policy Framework)${NC}\n"
-    printf "${BLUE}│${NC} ${DIM}Define qué servidores pueden enviar correo por este dominio${NC}\n"
-    printf "${BLUE}│${NC}\n"
+    seccion_inicio
+    L "${BOLD}1. SPF (Sender Policy Framework)${NC}"
+    L "${DIM}Define qué servidores pueden enviar correo por este dominio${NC}"
+    LV
 
     local spf
     spf=$(safe_dig +short TXT "$dominio" | grep -i "v=spf1" || true)
 
     if [[ -z "$spf" ]]; then
-        printf "${BLUE}│${NC}  ${FAIL} No se encontró registro SPF\n"
-        printf "${BLUE}│${NC}    ${YELLOW}→ Vulnerable a spoofing${NC}\n"
+        L " ${FAIL} No se encontró registro SPF"
+        L "   ${YELLOW}→ Vulnerable a spoofing${NC}"
         sumar_puntos 0 3
-        separador_fin
+        seccion_fin
         return
     fi
 
-    printf "${BLUE}│${NC}  ${OK} Registro encontrado:\n"
-    printf "${BLUE}│${NC}    ${CYAN}%s${NC}\n" "$spf"
-    printf "${BLUE}│${NC}\n"
+    L " ${OK} Registro encontrado:"
+    L "   ${CYAN}${spf}${NC}"
+    LV
 
-    # Comprobar redirect= (delega a otro dominio, hereda su all)
+    # redirect=
     local tiene_redirect=""
     tiene_redirect=$(echo "$spf" | grep -oP 'redirect=\K[^ "]+' || true)
 
     if [[ -n "$tiene_redirect" ]]; then
-        printf "${BLUE}│${NC}  ${INFO} Usa ${CYAN}redirect=${tiene_redirect}${NC}\n"
+        L " ${INFO} Usa ${CYAN}redirect=${tiene_redirect}${NC}"
 
         local spf_redir
         spf_redir=$(safe_dig +short TXT "$tiene_redirect" | grep -i "v=spf1" || true)
         if [[ -n "$spf_redir" ]]; then
-            # Mostrar solo primeros 70 chars si es muy largo
-            local spf_redir_corto="$spf_redir"
             local spf_redir_limpio
             spf_redir_limpio=$(printf '%s' "$spf_redir" | tr -d '"')
             if [[ ${#spf_redir_limpio} -gt 70 ]]; then
-                spf_redir_corto="${spf_redir_limpio:0:67}..."
+                spf_redir_limpio="${spf_redir_limpio:0:67}..."
             fi
-            printf "${BLUE}│${NC}    SPF delegado: ${DIM}%s${NC}\n" "$spf_redir_corto"
+            L "   SPF delegado: ${DIM}${spf_redir_limpio}${NC}"
 
             if echo "$spf_redir" | grep -q "\-all"; then
-                printf "${BLUE}│${NC}  ${OK} Política heredada: ${GREEN}ESTRICTA (-all)${NC}\n"
+                L " ${OK} Política heredada: ${GREEN}ESTRICTA (-all)${NC}"
                 sumar_puntos 3 3
             elif echo "$spf_redir" | grep -q "\~all"; then
-                printf "${BLUE}│${NC}  ${WARN} Política heredada: ${YELLOW}SUAVE (~all)${NC}\n"
+                L " ${WARN} Política heredada: ${YELLOW}SUAVE (~all)${NC}"
                 sumar_puntos 2 3
             else
-                printf "${BLUE}│${NC}  ${WARN} Política heredada no determinada claramente\n"
+                L " ${WARN} Política heredada no determinada claramente"
                 sumar_puntos 1 3
             fi
         else
-            printf "${BLUE}│${NC}  ${WARN} No se pudo resolver el SPF del dominio redirect\n"
+            L " ${WARN} No se pudo resolver el SPF del dominio redirect"
             sumar_puntos 1 3
         fi
     elif echo "$spf" | grep -q "\-all"; then
-        printf "${BLUE}│${NC}  ${OK} Política: ${GREEN}ESTRICTA (-all)${NC} — rechaza correo no autorizado\n"
+        L " ${OK} Política: ${GREEN}ESTRICTA (-all)${NC} — rechaza correo no autorizado"
         sumar_puntos 3 3
     elif echo "$spf" | grep -q "\~all"; then
-        printf "${BLUE}│${NC}  ${WARN} Política: ${YELLOW}SUAVE (~all)${NC} — marca como sospechoso, no rechaza\n"
+        L " ${WARN} Política: ${YELLOW}SUAVE (~all)${NC} — marca como sospechoso, no rechaza"
         sumar_puntos 2 3
     elif echo "$spf" | grep -q "\?all"; then
-        printf "${BLUE}│${NC}  ${WARN} Política: ${YELLOW}NEUTRAL (?all)${NC} — sin acción\n"
+        L " ${WARN} Política: ${YELLOW}NEUTRAL (?all)${NC} — sin acción"
         sumar_puntos 1 3
     elif echo "$spf" | grep -q "+all"; then
-        printf "${BLUE}│${NC}  ${FAIL} Política: ${RED}ABIERTA (+all)${NC} — ¡cualquiera puede suplantar!\n"
+        L " ${FAIL} Política: ${RED}ABIERTA (+all)${NC} — ¡cualquiera puede suplantar!"
         sumar_puntos 0 3
     else
-        printf "${BLUE}│${NC}  ${WARN} No se detectó mecanismo 'all' explícito\n"
+        L " ${WARN} No se detectó mecanismo 'all' explícito"
         sumar_puntos 1 3
     fi
 
-    # Contar lookups DNS (límite de 10 según RFC 7208)
     local lookups
     lookups=$(echo "$spf" | grep -oE '(include:|a:|mx:|ptr:|redirect=)' | wc -l | tr -d ' ')
     if [[ "$lookups" -gt 10 ]]; then
-        printf "${BLUE}│${NC}  ${FAIL} DNS lookups: ${RED}${lookups}/10${NC} — excede RFC 7208\n"
+        L " ${FAIL} DNS lookups: ${RED}${lookups}/10${NC} — excede RFC 7208"
     elif [[ "$lookups" -gt 7 ]]; then
-        printf "${BLUE}│${NC}  ${WARN} DNS lookups: ${YELLOW}${lookups}/10${NC} — cerca del límite\n"
+        L " ${WARN} DNS lookups: ${YELLOW}${lookups}/10${NC} — cerca del límite"
     else
-        printf "${BLUE}│${NC}  ${OK} DNS lookups: ${GREEN}${lookups}/10${NC}\n"
+        L " ${OK} DNS lookups: ${GREEN}${lookups}/10${NC}"
     fi
-    separador_fin
+    seccion_fin
 }
 
 # ─── DKIM ────────────────────────────────────────────────────────────
 auditar_dkim() {
     local dominio="$1"
-    separador
-    printf "${BLUE}│${NC} ${BOLD}2. DKIM (DomainKeys Identified Mail)${NC}\n"
-    printf "${BLUE}│${NC} ${DIM}Firma criptográfica que verifica la integridad del mensaje${NC}\n"
-    printf "${BLUE}│${NC}\n"
+    seccion_inicio
+    L "${BOLD}2. DKIM (DomainKeys Identified Mail)${NC}"
+    L "${DIM}Firma criptográfica que verifica la integridad del mensaje${NC}"
+    LV
 
     local selectores=("default" "google" "selector1" "selector2" "k1" "k2"
                       "mail" "dkim" "s1" "s2" "smtp" "mandrill" "everlytickey1"
@@ -218,139 +237,136 @@ auditar_dkim() {
     for selector in "${selectores[@]}"; do
         local resultado
         resultado=$(safe_dig +short TXT "${selector}._domainkey.${dominio}" || true)
-        if [[ -n "$resultado" ]] && echo "$resultado" | grep -qi "p=" ; then
+        if [[ -n "$resultado" ]] && echo "$resultado" | grep -qi "p="; then
             if [[ $encontrados -eq 0 ]]; then
-                printf "${BLUE}│${NC}  ${OK} Registros DKIM encontrados:\n"
+                L " ${OK} Registros DKIM encontrados:"
             fi
-            printf "${BLUE}│${NC}    Selector: ${CYAN}%-15s${NC} → ${GREEN}Presente${NC}\n" "$selector"
+            L "   Selector: ${CYAN}$(printf '%-15s' "$selector")${NC} → ${GREEN}Presente${NC}"
             encontrados=$((encontrados + 1))
         fi
     done
 
     if [[ $encontrados -eq 0 ]]; then
-        printf "${BLUE}│${NC}  ${WARN} Sin registros DKIM en selectores comunes\n"
-        printf "${BLUE}│${NC}    ${YELLOW}→ Puede usar un selector personalizado no probado${NC}\n"
-        printf "${BLUE}│${NC}    ${DIM}Prueba manual: dig TXT <selector>._domainkey.${dominio}${NC}\n"
+        L " ${WARN} Sin registros DKIM en selectores comunes"
+        L "   ${YELLOW}→ Puede usar un selector personalizado no probado${NC}"
+        L "   ${DIM}Prueba manual: dig TXT <selector>._domainkey.${dominio}${NC}"
         sumar_puntos 0 2
     else
-        printf "${BLUE}│${NC}  ${OK} Total: ${GREEN}${encontrados}${NC} selector(es) DKIM verificados\n"
+        L " ${OK} Total: ${GREEN}${encontrados}${NC} selector(es) DKIM verificados"
         sumar_puntos 2 2
     fi
-    separador_fin
+    seccion_fin
 }
 
 # ─── DMARC ───────────────────────────────────────────────────────────
 auditar_dmarc() {
     local dominio="$1"
-    separador
-    printf "${BLUE}│${NC} ${BOLD}3. DMARC (Domain-based Message Authentication, Reporting & Conformance)${NC}\n"
-    printf "${BLUE}│${NC} ${DIM}Política que une SPF y DKIM e indica cómo tratar fallos${NC}\n"
-    printf "${BLUE}│${NC}\n"
+    seccion_inicio
+    L "${BOLD}3. DMARC (Domain-based Message Authentication, Reporting & Conformance)${NC}"
+    L "${DIM}Política que une SPF y DKIM e indica cómo tratar fallos${NC}"
+    LV
 
     local dmarc_raw
     dmarc_raw=$(safe_dig +noall +answer TXT "_dmarc.${dominio}" || true)
 
-    # Extraer solo la línea que contiene v=DMARC1 (ignora CNAMEs)
     local dmarc
     dmarc=$(echo "$dmarc_raw" | grep -oP '"v=DMARC1[^"]*"' | head -1 || true)
 
     if [[ -z "$dmarc" ]]; then
-        printf "${BLUE}│${NC}  ${FAIL} No se encontró registro DMARC\n"
-        printf "${BLUE}│${NC}    ${YELLOW}→ Sin instrucciones para correo no autenticado${NC}\n"
+        L " ${FAIL} No se encontró registro DMARC"
+        L "   ${YELLOW}→ Sin instrucciones para correo no autenticado${NC}"
         sumar_puntos 0 3
-        separador_fin
+        seccion_fin
         return
     fi
 
-    # Detectar CNAME (delegación)
     local cname_target
     cname_target=$(echo "$dmarc_raw" | awk '/CNAME/{print $NF}' | head -1 || true)
 
-    printf "${BLUE}│${NC}  ${OK} Registro encontrado:\n"
+    L " ${OK} Registro encontrado:"
     if [[ -n "$cname_target" ]]; then
-        printf "${BLUE}│${NC}    ${DIM}(delegado vía CNAME → ${cname_target})${NC}\n"
+        L "   ${DIM}(delegado vía CNAME → ${cname_target})${NC}"
     fi
-    printf "${BLUE}│${NC}    ${CYAN}%s${NC}\n" "$dmarc"
-    printf "${BLUE}│${NC}\n"
+    L "   ${CYAN}${dmarc}${NC}"
+    LV
 
-    # Política principal
     local politica
     politica=$(echo "$dmarc" | grep -oP 'p=\K[^;]+' | tr -d '"' | head -1 || true)
     case "$politica" in
         reject)
-            printf "${BLUE}│${NC}  ${OK} Política: ${GREEN}REJECT${NC} — rechaza correo no autenticado\n"
+            L " ${OK} Política: ${GREEN}REJECT${NC} — rechaza correo no autenticado"
             sumar_puntos 3 3
             ;;
         quarantine)
-            printf "${BLUE}│${NC}  ${WARN} Política: ${YELLOW}QUARANTINE${NC} — envía a spam\n"
+            L " ${WARN} Política: ${YELLOW}QUARANTINE${NC} — envía a spam"
             sumar_puntos 2 3
             ;;
         none)
-            printf "${BLUE}│${NC}  ${WARN} Política: ${YELLOW}NONE${NC} — solo monitoriza, sin protección activa\n"
+            L " ${WARN} Política: ${YELLOW}NONE${NC} — solo monitoriza, sin protección activa"
             sumar_puntos 1 3
             ;;
         *)
-            printf "${BLUE}│${NC}  ${WARN} Política no reconocida: '${politica}'\n"
+            L " ${WARN} Política no reconocida: '${politica}'"
             sumar_puntos 0 3
             ;;
     esac
 
-    # Subdominio
     local sub_politica
     sub_politica=$(echo "$dmarc" | grep -oP 'sp=\K[^;]+' | tr -d '"' | head -1 || true)
     if [[ -n "$sub_politica" ]]; then
-        printf "${BLUE}│${NC}    Subdominios (sp): ${CYAN}${sub_politica}${NC}\n"
+        L "   Subdominios (sp): ${CYAN}${sub_politica}${NC}"
     fi
 
-    # Porcentaje
     local pct
     pct=$(echo "$dmarc" | grep -oP 'pct=\K[0-9]+' | head -1 || true)
     if [[ -n "$pct" ]] && [[ "$pct" -lt 100 ]]; then
-        printf "${BLUE}│${NC}  ${WARN} Aplicado solo al ${YELLOW}${pct}%%${NC} del correo (objetivo: 100%%)\n"
+        L " ${WARN} Aplicado solo al ${YELLOW}${pct}%%${NC} del correo (objetivo: 100%%)"
     fi
 
-    # Reportes
     local rua ruf
     rua=$(echo "$dmarc" | grep -oP 'rua=\K[^;]+' | tr -d '"' | head -1 || true)
     ruf=$(echo "$dmarc" | grep -oP 'ruf=\K[^;]+' | tr -d '"' | head -1 || true)
-    printf "${BLUE}│${NC}\n"
-    printf "${BLUE}│${NC}  Reportes:\n"
+    LV
+    L " Reportes:"
     if [[ -n "$rua" ]]; then
-        printf "${BLUE}│${NC}    ${OK} Agregados (rua): ${CYAN}%s${NC}\n" "$rua"
+        L "   ${OK} Agregados (rua): ${CYAN}${rua}${NC}"
     else
-        printf "${BLUE}│${NC}    ${WARN} Sin reportes agregados (rua)\n"
+        L "   ${WARN} Sin reportes agregados (rua)"
     fi
     if [[ -n "$ruf" ]]; then
-        printf "${BLUE}│${NC}    ${OK} Forenses  (ruf): ${CYAN}%s${NC}\n" "$ruf"
+        L "   ${OK} Forenses  (ruf): ${CYAN}${ruf}${NC}"
     else
-        printf "${BLUE}│${NC}    ${INFO} Sin reportes forenses (ruf) — opcional\n"
+        L "   ${INFO} Sin reportes forenses (ruf) — opcional"
     fi
-    separador_fin
+    seccion_fin
 }
 
 # ─── MX ──────────────────────────────────────────────────────────────
 auditar_mx() {
     local dominio="$1"
-    separador
-    printf "${BLUE}│${NC} ${BOLD}4. MX (Mail eXchange)${NC}\n"
-    printf "${BLUE}│${NC} ${DIM}Servidores responsables de recibir correo para el dominio${NC}\n"
-    printf "${BLUE}│${NC}\n"
+    seccion_inicio
+    L "${BOLD}4. MX (Mail eXchange)${NC}"
+    L "${DIM}Servidores responsables de recibir correo para el dominio${NC}"
+    LV
 
     local mx
     mx=$(safe_dig +short MX "$dominio" | sort -n || true)
 
     if [[ -z "$mx" ]]; then
-        printf "${BLUE}│${NC}  ${FAIL} No se encontraron registros MX\n"
-        printf "${BLUE}│${NC}    ${YELLOW}→ Este dominio no puede recibir correo${NC}\n"
+        L " ${FAIL} No se encontraron registros MX"
+        L "   ${YELLOW}→ Este dominio no puede recibir correo${NC}"
         sumar_puntos 0 2
-        separador_fin
+        TIENE_MX=false
+        seccion_fin
         return
     fi
 
-    printf "${BLUE}│${NC}  ${OK} Servidores MX encontrados:\n"
-    printf "${BLUE}│${NC}\n"
-    printf "${BLUE}│${NC}    ${DIM}%-12s %-45s${NC}\n" "PRIORIDAD" "SERVIDOR"
-    printf "${BLUE}│${NC}    ${DIM}%-12s %-45s${NC}\n" "─────────" "────────────────────────────────"
+    TIENE_MX=true
+
+    L " ${OK} Servidores MX encontrados:"
+    LV
+    L "   ${DIM}$(printf '%-12s %-45s' "PRIORIDAD" "SERVIDOR")${NC}"
+    L "   ${DIM}$(printf '%-12s %-45s' "─────────" "────────────────────────────────")${NC}"
 
     MX_SERVERS=()
 
@@ -359,15 +375,14 @@ auditar_mx() {
         local prioridad servidor
         prioridad=$(echo "$linea" | awk '{print $1}')
         servidor=$(echo "$linea" | awk '{print $2}')
-        printf "${BLUE}│${NC}    ${CYAN}%-12s${NC} ${CYAN}%s${NC}\n" "$prioridad" "$servidor"
+        L "   ${CYAN}$(printf '%-12s' "$prioridad")${NC} ${CYAN}${servidor}${NC}"
         MX_SERVERS+=("$servidor")
     done <<< "$mx"
 
     sumar_puntos 2 2
 
-    # Detectar proveedor
-    printf "${BLUE}│${NC}\n"
-    printf "${BLUE}│${NC}  Proveedor detectado: "
+    LV
+    L " Proveedor detectado: \c"
     if echo "$mx" | grep -qi "google\|gmail\|googlemail"; then
         printf "${GREEN}Google Workspace${NC}\n"
     elif echo "$mx" | grep -qi "outlook\|microsoft"; then
@@ -387,20 +402,20 @@ auditar_mx() {
     elif echo "$mx" | grep -qi "ionos\|1and1\|perfora\|kundenserver"; then
         printf "${GREEN}IONOS (1&1)${NC}\n"
     else
-        printf "${YELLOW}No identificado (hosting propio o proveedor menor)${NC}\n"
+        printf "${YELLOW}No identificado${NC}\n"
     fi
-    separador_fin
+    seccion_fin
 }
 
 # ─── DANE / TLSA ─────────────────────────────────────────────────────
 auditar_dane() {
     local dominio="$1"
-    separador
-    printf "${BLUE}│${NC} ${BOLD}5. DANE/TLSA (DNS-based Authentication of Named Entities)${NC}\n"
-    printf "${BLUE}│${NC} ${DIM}Vincula certificados TLS a registros DNS (requiere DNSSEC)${NC}\n"
-    printf "${BLUE}│${NC}\n"
+    seccion_inicio
+    L "${BOLD}5. DANE/TLSA (DNS-based Authentication of Named Entities)${NC}"
+    L "${DIM}Vincula certificados TLS a registros DNS (requiere DNSSEC)${NC}"
+    LV
 
-    # Verificar DNSSEC
+    # DNSSEC
     local dnssec_ok=false
     local dnssec_check
     dnssec_check=$(safe_dig +dnssec +short DNSKEY "$dominio" || true)
@@ -409,24 +424,24 @@ auditar_dane() {
         local ad_check
         ad_check=$(safe_dig +dnssec "$dominio" A | grep -c "flags:.*ad" || true)
         if [[ "$ad_check" -gt 0 ]]; then
-            printf "${BLUE}│${NC}  ${OK} DNSSEC: ${GREEN}Validado (flag AD presente)${NC}\n"
+            L " ${OK} DNSSEC: ${GREEN}Validado (flag AD presente)${NC}"
             dnssec_ok=true
         else
-            printf "${BLUE}│${NC}  ${WARN} DNSSEC: ${YELLOW}DNSKEY encontrado, sin validación AD${NC}\n"
-            printf "${BLUE}│${NC}    ${DIM}Puede depender del resolver utilizado${NC}\n"
+            L " ${WARN} DNSSEC: ${YELLOW}DNSKEY encontrado, sin validación AD${NC}"
+            L "   ${DIM}Puede depender del resolver utilizado${NC}"
             dnssec_ok=true
         fi
     else
-        printf "${BLUE}│${NC}  ${FAIL} DNSSEC: ${RED}No habilitado${NC}\n"
-        printf "${BLUE}│${NC}    ${YELLOW}→ DANE requiere DNSSEC para funcionar${NC}\n"
+        L " ${FAIL} DNSSEC: ${RED}No habilitado${NC}"
+        L "   ${YELLOW}→ DANE requiere DNSSEC para funcionar${NC}"
     fi
 
-    printf "${BLUE}│${NC}\n"
+    LV
 
     if [[ ${#MX_SERVERS[@]} -eq 0 ]]; then
-        printf "${BLUE}│${NC}  ${WARN} Sin servidores MX — no se puede verificar TLSA\n"
+        L " ${WARN} Sin servidores MX — no se puede verificar TLSA"
         sumar_puntos 0 2
-        separador_fin
+        seccion_fin
         return
     fi
 
@@ -434,8 +449,8 @@ auditar_dane() {
     local tlsa_total=0
     local starttls_count=0
 
-    printf "${BLUE}│${NC}  Registros TLSA (puerto 25/SMTP) por servidor MX:\n"
-    printf "${BLUE}│${NC}\n"
+    L " Registros TLSA (puerto 25/SMTP) por servidor MX:"
+    LV
 
     for mx_server in "${MX_SERVERS[@]}"; do
         mx_server="${mx_server%.}"
@@ -446,7 +461,7 @@ auditar_dane() {
 
         if [[ -n "$tlsa" ]]; then
             tlsa_encontrados=$((tlsa_encontrados + 1))
-            printf "${BLUE}│${NC}    ${OK} ${CYAN}%s${NC}\n" "$mx_server"
+            L "   ${OK} ${CYAN}${mx_server}${NC}"
 
             while IFS= read -r registro; do
                 [[ -z "$registro" ]] && continue
@@ -479,56 +494,85 @@ auditar_dane() {
                     *) match_desc="Desconocido" ;;
                 esac
 
-                printf "${BLUE}│${NC}       Uso: ${GREEN}%s${NC} (%s)\n" "$usage" "$uso_desc"
-                printf "${BLUE}│${NC}       Selector: %s (%s) · Match: %s (%s)\n" \
-                    "$selector" "$sel_desc" "$matching" "$match_desc"
+                L "      Uso: ${GREEN}${usage}${NC} (${uso_desc})"
+                L "      Selector: ${selector} (${sel_desc}) · Match: ${matching} (${match_desc})"
             done <<< "$tlsa"
         else
-            printf "${BLUE}│${NC}    ${FAIL} ${CYAN}%s${NC} → Sin TLSA\n" "$mx_server"
+            L "   ${FAIL} ${CYAN}${mx_server}${NC} → Sin TLSA"
         fi
 
-        # STARTTLS — solo si nc y timeout están disponibles
+        # STARTTLS
         if command -v timeout &>/dev/null && command -v nc &>/dev/null; then
             local smtp_banner
             smtp_banner=$(timeout 5 bash -c "echo 'EHLO test' | nc -w3 \"${mx_server}\" 25" 2>/dev/null || true)
             if [[ -n "$smtp_banner" ]] && echo "$smtp_banner" | grep -qi "STARTTLS"; then
-                printf "${BLUE}│${NC}       ${OK} STARTTLS: ${GREEN}Soportado${NC}\n"
+                L "      ${OK} STARTTLS: ${GREEN}Soportado${NC}"
                 starttls_count=$((starttls_count + 1))
             elif [[ -n "$smtp_banner" ]]; then
-                printf "${BLUE}│${NC}       ${WARN} STARTTLS: ${YELLOW}No anunciado en EHLO${NC}\n"
+                L "      ${WARN} STARTTLS: ${YELLOW}No anunciado en EHLO${NC}"
             else
-                printf "${BLUE}│${NC}       ${INFO} STARTTLS: ${DIM}Sin respuesta en puerto 25${NC}\n"
+                L "      ${INFO} STARTTLS: ${DIM}Sin respuesta en puerto 25${NC}"
             fi
         fi
-        printf "${BLUE}│${NC}\n"
+        LV
     done
 
-    # Puntuación DANE
-    printf "${BLUE}│${NC}  Resumen DANE/TLSA:\n"
+    L " Resumen DANE/TLSA:"
     if [[ $tlsa_encontrados -gt 0 ]] && [[ "$dnssec_ok" == true ]]; then
-        printf "${BLUE}│${NC}    ${OK} ${GREEN}${tlsa_encontrados}/${tlsa_total}${NC} servidores MX con TLSA\n"
+        L "   ${OK} ${GREEN}${tlsa_encontrados}/${tlsa_total}${NC} servidores MX con TLSA"
         if [[ $tlsa_encontrados -eq $tlsa_total ]]; then
             sumar_puntos 2 2
         else
             sumar_puntos 1 2
         fi
     elif [[ $tlsa_encontrados -gt 0 ]]; then
-        printf "${BLUE}│${NC}    ${WARN} TLSA encontrados pero ${YELLOW}DNSSEC no validado${NC}\n"
+        L "   ${WARN} TLSA encontrados pero ${YELLOW}DNSSEC no validado${NC}"
         sumar_puntos 1 2
     else
-        printf "${BLUE}│${NC}    ${FAIL} Sin registros TLSA en ningún servidor MX\n"
+        L "   ${FAIL} Sin registros TLSA en ningún servidor MX"
         if [[ "$dnssec_ok" == true ]]; then
-            printf "${BLUE}│${NC}    ${YELLOW}→ DNSSEC activo: buen momento para implementar DANE${NC}\n"
+            L "   ${YELLOW}→ DNSSEC activo: buen momento para implementar DANE${NC}"
         else
-            printf "${BLUE}│${NC}    ${YELLOW}→ Habilitar DNSSEC primero, luego añadir TLSA${NC}\n"
+            L "   ${YELLOW}→ Habilitar DNSSEC primero, luego añadir TLSA${NC}"
         fi
         sumar_puntos 0 2
     fi
 
     if [[ $starttls_count -gt 0 ]]; then
-        printf "${BLUE}│${NC}    ${OK} STARTTLS verificado en ${GREEN}${starttls_count}${NC} servidor(es)\n"
+        L "   ${OK} STARTTLS verificado en ${GREEN}${starttls_count}${NC} servidor(es)"
     fi
-    separador_fin
+    seccion_fin
+}
+
+# ─── Aviso sin correo ────────────────────────────────────────────────
+mostrar_aviso_sin_correo() {
+    local dominio="$1"
+    printf "\n"
+    printf "${YELLOW}╔══════════════════════════════════════════════════════════════╗${NC}\n"
+    printf "${YELLOW}║${NC}                                                              ${YELLOW}║${NC}\n"
+    printf "${YELLOW}║${NC}  ${WARN} ${BOLD}Este dominio no parece tener correo electrónico configurado${NC} ${YELLOW}║${NC}\n"
+    printf "${YELLOW}║${NC}                                                              ${YELLOW}║${NC}\n"
+    printf "${YELLOW}║${NC}  No se encontraron registros MX para ${CYAN}${dominio}${NC}               ${YELLOW}║${NC}\n"
+    printf "${YELLOW}║${NC}                                                              ${YELLOW}║${NC}\n"
+    printf "${YELLOW}║${NC}  Posibles causas:                                            ${YELLOW}║${NC}\n"
+    printf "${YELLOW}║${NC}    • Error al escribir el dominio                             ${YELLOW}║${NC}\n"
+    printf "${YELLOW}║${NC}    • El dominio no usa correo electrónico                     ${YELLOW}║${NC}\n"
+    printf "${YELLOW}║${NC}    • Los registros MX aún no se han propagado                 ${YELLOW}║${NC}\n"
+    printf "${YELLOW}║${NC}                                                              ${YELLOW}║${NC}\n"
+    printf "${YELLOW}╚══════════════════════════════════════════════════════════════╝${NC}\n"
+    printf "\n"
+    printf "¿Continuar igualmente con la auditoría? [s/N]: "
+    local respuesta
+    read -r respuesta
+    case "$respuesta" in
+        [sS]|[sS][iI]|[yY]|[yY][eE][sS])
+            return 0
+            ;;
+        *)
+            printf "\nAuditoría cancelada.\n"
+            exit 0
+            ;;
+    esac
 }
 
 # ─── Resumen ─────────────────────────────────────────────────────────
@@ -555,14 +599,13 @@ mostrar_resumen() {
         emoji="🔴"
     fi
 
-    # Barra de progreso
     local barra=""
     local llenos=$((porcentaje / 5))
     local vacios=$((20 - llenos))
     for ((i=0; i<llenos; i++)); do barra+="█"; done
     for ((i=0; i<vacios; i++)); do barra+="░"; done
 
-    # Recopilar recomendaciones
+    # Recomendaciones
     local recomendaciones=()
 
     local spf_check dmarc_check dnssec_present
@@ -591,7 +634,11 @@ mostrar_resumen() {
         recomendaciones+=("Tras DNSSEC, implementar DANE/TLSA en MX")
     fi
 
-    # Imprimir recuadro final
+    if [[ "$TIENE_MX" == false ]]; then
+        recomendaciones+=("Configurar registros MX para recibir correo")
+    fi
+
+    # Recuadro
     printf "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}\n"
     linea_vacia
     linea_recuadro "${BOLD}                    RESULTADO FINAL${NC}"
@@ -633,12 +680,21 @@ main() {
     dominio=$(echo "$dominio" | sed -E 's|^https?://||; s|/.*||; s|^www\.||')
 
     validar_dominio "$dominio"
+    verificar_dominio_existe "$dominio"
     mostrar_banner "$dominio"
+
+    # Primero comprobar MX para decidir si continuar
+    auditar_mx "$dominio"
+
+    # Si no hay MX, avisar y preguntar
+    if [[ "$TIENE_MX" == false ]]; then
+        mostrar_aviso_sin_correo "$dominio"
+    fi
 
     auditar_spf "$dominio"
     auditar_dkim "$dominio"
     auditar_dmarc "$dominio"
-    auditar_mx "$dominio"
+    # MX ya se mostró arriba, no repetir
     auditar_dane "$dominio"
     mostrar_resumen "$dominio"
 }
