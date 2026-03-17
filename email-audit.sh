@@ -980,13 +980,27 @@ auditar_tls_certs() {
         L "   ${YELLOW}Tu ISP o firewall está bloqueando tráfico SMTP saliente.${NC}"
         L "   ${YELLOW}Esto es habitual en redes domésticas y proveedores cloud.${NC}"
         LV
-        L "   ${DIM}Para ejecutar este check:${NC}"
+        L " ${INFO} ${BOLD}Comprueba los certificados TLS online:${NC}"
+        LV
+        L "   ${CYAN}ssl-tools.net${NC} — Certificado, STARTTLS, PFS, DANE, Heartbleed"
+        L "   ${DIM}https://ssl-tools.net/mailservers/${dominio}${NC}"
+        LV
+        L "   ${CYAN}CheckTLS${NC} — Conversación SMTP completa, MTA-STS, DANE"
+        L "   ${DIM}https://www.checktls.com/TestReceiver${NC}"
+        LV
+        L "   ${CYAN}Hardenize${NC} — Análisis completo de seguridad del dominio"
+        L "   ${DIM}https://www.hardenize.com/report/${dominio}${NC}"
+        LV
+        L "   ${CYAN}MXToolbox${NC} — SMTP TLS, certificados, diagnóstico MX"
+        L "   ${DIM}https://mxtoolbox.com/SuperTool.aspx?action=smtp:${primer_mx}:25${NC}"
+        LV
+        L "   ${CYAN}Internet.nl${NC} — Test estándar del gobierno holandés"
+        L "   ${DIM}https://internet.nl/mail/${dominio}${NC}"
+        LV
+        L "   ${DIM}Para ejecutar este check localmente:${NC}"
         L "   ${DIM} • Usa un VPS con puerto 25 abierto (Hetzner, OVH...)${NC}"
         L "   ${DIM} • Usa una VPN que no filtre SMTP${NC}"
         L "   ${DIM} • Ejecuta desde una red sin restricciones de salida${NC}"
-        LV
-        L "   ${DIM}Prueba manual: nc -zv ${primer_mx} 25${NC}"
-        L "   ${DIM}Si se queda colgado = puerto bloqueado por tu red${NC}"
         sumar_puntos 0 2
         seccion_fin
         return
