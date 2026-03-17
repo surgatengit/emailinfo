@@ -949,6 +949,49 @@ auditar_tls_certs() {
         return
     fi
 
+    # Comprobar si los puertos SMTP están accesibles (test rápido)
+    local primer_mx="${MX_SERVERS[0]%.}"
+    local smtp_accesible=false
+    local puertos_test=(25 587 465)
+
+    L " Comprobando accesibilidad de puertos SMTP..."
+    for puerto_test in "${puertos_test[@]}"; do
+        local test_ok=false
+        if command -v nc &>/dev/null; then
+            if nc -zw3 "$primer_mx" "$puerto_test" &>/dev/null; then
+                test_ok=true
+            fi
+        elif command -v timeout &>/dev/null; then
+            if timeout 3 bash -c "echo >/dev/tcp/${primer_mx}/${puerto_test}" &>/dev/null; then
+                test_ok=true
+            fi
+        fi
+        if [[ "$test_ok" == true ]]; then
+            L "   ${OK} Puerto ${GREEN}${puerto_test}${NC} accesible en ${primer_mx}"
+            smtp_accesible=true
+        else
+            L "   ${FAIL} Puerto ${DIM}${puerto_test}${NC} bloqueado o sin respuesta"
+        fi
+    done
+    LV
+
+    if [[ "$smtp_accesible" == false ]]; then
+        L " ${FAIL} ${RED}Ningún puerto SMTP accesible${NC} (25, 587, 465)"
+        L "   ${YELLOW}Tu ISP o firewall está bloqueando tráfico SMTP saliente.${NC}"
+        L "   ${YELLOW}Esto es habitual en redes domésticas y proveedores cloud.${NC}"
+        LV
+        L "   ${DIM}Para ejecutar este check:${NC}"
+        L "   ${DIM} • Usa un VPS con puerto 25 abierto (Hetzner, OVH...)${NC}"
+        L "   ${DIM} • Usa una VPN que no filtre SMTP${NC}"
+        L "   ${DIM} • Ejecuta desde una red sin restricciones de salida${NC}"
+        LV
+        L "   ${DIM}Prueba manual: nc -zv ${primer_mx} 25${NC}"
+        L "   ${DIM}Si se queda colgado = puerto bloqueado por tu red${NC}"
+        sumar_puntos 0 2
+        seccion_fin
+        return
+    fi
+
     local certs_ok=0
     local certs_total=0
 
@@ -958,20 +1001,56 @@ auditar_tls_certs() {
 
         L "   ${CYAN}${mx_server}${NC}"
 
-        # Obtener certificado vía STARTTLS
-        local cert_info
-        cert_info=$(echo "" | timeout 10 openssl s_client \
+        # Intentar obtener certificado: puerto 25 (STARTTLS), 587 (STARTTLS), 465 (TLS directo)
+        local cert_info=""
+        local puerto_usado=""
+
+        # Intento 1: puerto 25 con STARTTLS
+        cert_info=$(echo "" | timeout 5 openssl s_client \
             -starttls smtp \
             -connect "${mx_server}:25" \
             -servername "${mx_server}" \
             2>/dev/null || true)
 
-        if [[ -z "$cert_info" ]] || ! echo "$cert_info" | grep -q "BEGIN CERTIFICATE"; then
+        if echo "$cert_info" | grep -q "BEGIN CERTIFICATE"; then
+            puerto_usado="25 (STARTTLS)"
+        fi
+
+        # Intento 2: puerto 587 con STARTTLS
+        if [[ -z "$puerto_usado" ]]; then
+            cert_info=$(echo "" | timeout 5 openssl s_client \
+                -starttls smtp \
+                -connect "${mx_server}:587" \
+                -servername "${mx_server}" \
+                2>/dev/null || true)
+
+            if echo "$cert_info" | grep -q "BEGIN CERTIFICATE"; then
+                puerto_usado="587 (STARTTLS/submission)"
+            fi
+        fi
+
+        # Intento 3: puerto 465 con TLS directo (SMTPS)
+        if [[ -z "$puerto_usado" ]]; then
+            cert_info=$(echo "" | timeout 5 openssl s_client \
+                -connect "${mx_server}:465" \
+                -servername "${mx_server}" \
+                2>/dev/null || true)
+
+            if echo "$cert_info" | grep -q "BEGIN CERTIFICATE"; then
+                puerto_usado="465 (SMTPS/TLS directo)"
+            fi
+        fi
+
+        if [[ -z "$puerto_usado" ]]; then
             L "      ${FAIL} No se pudo obtener certificado TLS"
-            L "      ${YELLOW}→ STARTTLS no disponible o conexión rechazada${NC}"
+            L "      ${DIM}Puertos probados: 25, 587, 465 — todos inaccesibles${NC}"
+            L "      ${YELLOW}→ Red/firewall bloqueando SMTP saliente, o servidor sin TLS${NC}"
+            L "      ${DIM}Prueba manual: openssl s_client -starttls smtp -connect ${mx_server}:25${NC}"
             LV
             continue
         fi
+
+        L "      Puerto: ${GREEN}${puerto_usado}${NC}"
 
         # Extraer subject y emisor
         local subject issuer
