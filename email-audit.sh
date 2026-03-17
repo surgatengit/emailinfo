@@ -386,6 +386,8 @@ auditar_mx() {
 
     LV
     L " Proveedor detectado: \c"
+
+    # --- Proveedores principales ---
     if echo "$mx" | grep -qi "google\|gmail\|googlemail"; then
         printf "${GREEN}Google Workspace${NC}\n"
     elif echo "$mx" | grep -qi "outlook\|microsoft"; then
@@ -394,18 +396,104 @@ auditar_mx() {
         printf "${GREEN}ProtonMail${NC}\n"
     elif echo "$mx" | grep -qi "zoho"; then
         printf "${GREEN}Zoho Mail${NC}\n"
+    elif echo "$mx" | grep -qi "yahoo\|yahoodns"; then
+        printf "${GREEN}Yahoo Mail${NC}\n"
+    elif echo "$mx" | grep -qi "icloud\|apple\|me\.com"; then
+        printf "${GREEN}Apple iCloud Mail${NC}\n"
+    elif echo "$mx" | grep -qi "yandex"; then
+        printf "${GREEN}Yandex Mail${NC}\n"
+    elif echo "$mx" | grep -qi "fastmail"; then
+        printf "${GREEN}Fastmail${NC}\n"
+    elif echo "$mx" | grep -qi "tutanota\|tuta\.io"; then
+        printf "${GREEN}Tuta (Tutanota)${NC}\n"
+    elif echo "$mx" | grep -qi "mailfence"; then
+        printf "${GREEN}Mailfence${NC}\n"
+    elif echo "$mx" | grep -qi "migadu"; then
+        printf "${GREEN}Migadu${NC}\n"
+
+    # --- Gateways de seguridad / antispam ---
     elif echo "$mx" | grep -qi "mimecast"; then
         printf "${GREEN}Mimecast${NC}\n"
     elif echo "$mx" | grep -qi "barracuda"; then
         printf "${GREEN}Barracuda${NC}\n"
     elif echo "$mx" | grep -qi "pphosted\|proofpoint"; then
         printf "${GREEN}Proofpoint${NC}\n"
+    elif echo "$mx" | grep -qi "messagelabs\|symantec\.email\|broadcom"; then
+        printf "${GREEN}Symantec/Broadcom Email Security${NC}\n"
+    elif echo "$mx" | grep -qi "trendmicro\|in\.hes\.trendmicro"; then
+        printf "${GREEN}Trend Micro Email Security${NC}\n"
+    elif echo "$mx" | grep -qi "sophos\|reflexion"; then
+        printf "${GREEN}Sophos Email${NC}\n"
+    elif echo "$mx" | grep -qi "forcepoint\|mailcontrol"; then
+        printf "${GREEN}Forcepoint${NC}\n"
+    elif echo "$mx" | grep -qi "cisco\|ironport\|iphmx"; then
+        printf "${GREEN}Cisco Secure Email (IronPort)${NC}\n"
+    elif echo "$mx" | grep -qi "fireeye\|trellix"; then
+        printf "${GREEN}Trellix (FireEye) Email Security${NC}\n"
+    elif echo "$mx" | grep -qi "spamexperts\|antispamcloud"; then
+        printf "${GREEN}SpamExperts${NC}\n"
+    elif echo "$mx" | grep -qi "hornetsecurity\|hornetdrive"; then
+        printf "${GREEN}Hornetsecurity${NC}\n"
+    elif echo "$mx" | grep -qi "cloudflare"; then
+        printf "${GREEN}Cloudflare Email Routing${NC}\n"
+
+    # --- Plataformas de envío transaccional / marketing ---
+    elif echo "$mx" | grep -qi "mailgun"; then
+        printf "${GREEN}Mailgun${NC}\n"
+    elif echo "$mx" | grep -qi "sendgrid"; then
+        printf "${GREEN}SendGrid (Twilio)${NC}\n"
+    elif echo "$mx" | grep -qi "amazonses\|amazonaws"; then
+        printf "${GREEN}Amazon SES${NC}\n"
+    elif echo "$mx" | grep -qi "postmarkapp"; then
+        printf "${GREEN}Postmark${NC}\n"
+    elif echo "$mx" | grep -qi "mailchimp\|mandrillapp"; then
+        printf "${GREEN}Mailchimp / Mandrill${NC}\n"
+    elif echo "$mx" | grep -qi "mailjet"; then
+        printf "${GREEN}Mailjet${NC}\n"
+
+    # --- Hosting / registradores ---
     elif echo "$mx" | grep -qi "ovh"; then
         printf "${GREEN}OVH${NC}\n"
     elif echo "$mx" | grep -qi "ionos\|1and1\|perfora\|kundenserver"; then
         printf "${GREEN}IONOS (1&1)${NC}\n"
+    elif echo "$mx" | grep -qi "gandi"; then
+        printf "${GREEN}Gandi${NC}\n"
+    elif echo "$mx" | grep -qi "hover"; then
+        printf "${GREEN}Hover${NC}\n"
+    elif echo "$mx" | grep -qi "namecheap\|privateemail"; then
+        printf "${GREEN}Namecheap (Private Email)${NC}\n"
+    elif echo "$mx" | grep -qi "godaddy\|secureserver"; then
+        printf "${GREEN}GoDaddy${NC}\n"
+    elif echo "$mx" | grep -qi "rackspace\|emailsrvr"; then
+        printf "${GREEN}Rackspace Email${NC}\n"
+    elif echo "$mx" | grep -qi "hostgator\|websitewelcome"; then
+        printf "${GREEN}HostGator${NC}\n"
+    elif echo "$mx" | grep -qi "bluehost"; then
+        printf "${GREEN}Bluehost${NC}\n"
+    elif echo "$mx" | grep -qi "dreamhost"; then
+        printf "${GREEN}DreamHost${NC}\n"
+    elif echo "$mx" | grep -qi "hetzner"; then
+        printf "${GREEN}Hetzner${NC}\n"
+    elif echo "$mx" | grep -qi "strato"; then
+        printf "${GREEN}Strato${NC}\n"
+    elif echo "$mx" | grep -qi "arsys\|nicline"; then
+        printf "${GREEN}Arsys${NC}\n"
+    elif echo "$mx" | grep -qi "dinahosting"; then
+        printf "${GREEN}Dinahosting${NC}\n"
+
+    # --- Paneles de control / plataformas colaborativas ---
+    elif echo "$mx" | grep -qi "cpanel\|whm"; then
+        printf "${GREEN}cPanel Mail${NC}\n"
+    elif echo "$mx" | grep -qi "plesk"; then
+        printf "${GREEN}Plesk Mail${NC}\n"
+    elif echo "$mx" | grep -qi "zimbra"; then
+        printf "${GREEN}Zimbra${NC}\n"
+
+    # --- No identificado: mostrar hostname como pista ---
     else
-        printf "${YELLOW}No identificado${NC}\n"
+        local mx_host
+        mx_host=$(echo "$mx" | head -1 | awk '{print $2}')
+        printf "${YELLOW}No identificado${NC} (${DIM}${mx_host}${NC})\n"
     fi
     seccion_fin
 }
