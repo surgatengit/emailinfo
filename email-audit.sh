@@ -225,12 +225,15 @@ auditar_dkim() {
     L "${BOLD}3. DKIM (DomainKeys Identified Mail)${NC}"
     L "${DIM}Firma criptográfica que verifica la integridad del mensaje${NC}"
     LV
-
+# https://zk.email/blog/archive Articulo interesante, usados los selectores mas comunes.
     local selectores=("default" "google" "selector1" "selector2" "k1" "k2"
                       "mail" "dkim" "s1" "s2" "smtp" "mandrill" "everlytickey1"
                       "mxvault" "cm" "protonmail" "protonmail2" "protonmail3"
                       "20230601" "20221208" "20210112" "20161025"
-                      "sig1" "m1" "smtp2" "email")
+                      "sig1" "m1" "smtp2" "email" "mkto" "aweber" "constantcontact"
+                      "zohocorp" "zendesk1" "zendesk2" "ovh" "mailjet" "mg" "krs" "mailo"
+                      "pic" "intercom" "hs1" "hs2" "dk" "kl" "neolane" "mta" "mindbox"
+                      "sailthru" "qualtrics" "fnc" "firebase1")
 
     local encontrados=0
 
