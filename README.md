@@ -303,22 +303,14 @@ dig TXT yourselector._domainkey.yourdomain.com
 Absolutely. The script returns exit code `0` on success. You could parse the score from the output or adapt the script to output JSON for automated pipelines.
 </details>
 
-<details>
-<summary><b>How do I contribute a new language?</b></summary>
-
-Add a `load_strings_XX()` function following the pattern of `load_strings_es` / `load_strings_en`, update the `--lang` parser and `detect_language()`, and open a PR.
-</details>
-
 ---
 
 ## 🤝 Contributing
 
 Contributions are welcome! Here are some ideas:
 
-- 🌍 **New languages** — add `load_strings_XX()` for your language
 - 🔎 **More DKIM selectors** — found one missing? Add it to the list
 - 🏢 **More providers** — help identify MX patterns for new providers
-- 📊 **JSON output mode** — for CI/CD and automation
 - 🐛 **Bug reports** — please include the domain (if public) and your OS
 
 ```bash
